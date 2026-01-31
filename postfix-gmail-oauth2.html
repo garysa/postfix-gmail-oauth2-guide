@@ -292,8 +292,12 @@ make
 <span class="comment"># Install the SASL plugin</span>
 sudo make install</code></pre>
 
-<h3><span class="step-num">3</span> Verify the plugin is installed</h3>
-<pre><code><span class="comment"># The plugin library should be in the SASL plugin directory</span>
+<h3><span class="step-num">3</span> Link the plugin into the SASL directory</h3>
+<p>The build installs the plugin to <code>/usr/local/lib/sasl2/</code>, but the SASL library searches <code>/usr/lib/x86_64-linux-gnu/sasl2/</code>. Create a symlink so SASL can find the XOAUTH2 mechanism:</p>
+<pre><code>sudo ln -sf /usr/local/lib/sasl2/libsasl-xoauth2.so /usr/lib/x86_64-linux-gnu/sasl2/libxoauth2.so</code></pre>
+
+<h3><span class="step-num">4</span> Verify the plugin is installed</h3>
+<pre><code><span class="comment"># The symlink should point to the plugin library</span>
 ls -la /usr/lib/x86_64-linux-gnu/sasl2/libxoauth2.so
 
 <span class="comment"># You should also have the token helper tool</span>
@@ -338,8 +342,9 @@ smtp_tls_wrappermode = no
 
 <h3><span class="step-num">3</span> Create the SASL password map</h3>
 <pre><code><span class="comment"># Create the password file pointing to the token location</span>
+<span class="comment"># The token path must be relative to the Postfix chroot (/var/spool/postfix)</span>
 sudo bash -c 'cat &gt; /etc/postfix/sasl_passwd &lt;&lt; EOF
-[smtp.gmail.com]:587    postfix-relay@gmail.com:/var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+[smtp.gmail.com]:587    postfix-relay@gmail.com:/etc/tokens/postfix-relay@gmail.com
 EOF'
 
 <span class="comment"># Generate the hash database and lock down permissions</span>
@@ -347,7 +352,7 @@ sudo postmap /etc/postfix/sasl_passwd
 sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db</code></pre>
 
 <div class="warning">
-  <strong>Important:</strong> Replace <code>postfix-relay@gmail.com</code> with your actual Gmail or Workspace email address. This must match in <strong>both</strong> the sasl_passwd file and the token filename.
+  <strong>Important:</strong> Replace <code>postfix-relay@gmail.com</code> with your actual Gmail or Workspace email address. This must match in <strong>both</strong> the sasl_passwd file and the token filename. The token path in <code>sasl_passwd</code> is chroot-relative (i.e., <code>/etc/tokens/...</code> not <code>/var/spool/postfix/etc/tokens/...</code>) because the Postfix <code>smtp</code> process runs inside the chroot.
 </div>
 
 <!-- ============================================================ -->
@@ -355,7 +360,7 @@ sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db</code></pre>
 
 <h3><span class="step-num">1</span> Create the sasl-xoauth2 configuration file</h3>
 
-<pre><code>sudo bash -c 'cat &gt; /etc/sasl-xoauth2.conf &lt;&lt; EOF
+<pre><code>sudo bash -c 'cat &gt; /usr/local/etc/sasl-xoauth2.conf &lt;&lt; EOF
 {
   "client_id": "<span class="string">&lt;YOUR_CLIENT_ID&gt;</span>",
   "client_secret": "<span class="string">&lt;YOUR_CLIENT_SECRET&gt;</span>",
@@ -365,9 +370,13 @@ sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db</code></pre>
 }
 EOF'
 
-sudo chmod 600 /etc/sasl-xoauth2.conf</code></pre>
+sudo chmod 600 /usr/local/etc/sasl-xoauth2.conf</code></pre>
 
 <p>Replace <code>&lt;YOUR_CLIENT_ID&gt;</code> and <code>&lt;YOUR_CLIENT_SECRET&gt;</code> with the values from <strong>Section 3, Step 4</strong>.</p>
+
+<div class="note">
+  <strong>Note:</strong> The <code>sasl-xoauth2</code> plugin reads its configuration from <code>/usr/local/etc/sasl-xoauth2.conf</code> (the default install prefix). This file must also be copied into the Postfix chroot &mdash; see <strong>Section 9</strong>.
+</div>
 
 <h3><span class="step-num">2</span> Create the token directory</h3>
 <pre><code><span class="comment"># The token directory must be inside the Postfix chroot</span>
@@ -380,7 +389,12 @@ sudo chmod 700 /var/spool/postfix/etc/tokens</code></pre>
 
 <h3><span class="step-num">1</span> Generate the initial token</h3>
 <pre><code>sudo sasl-xoauth2-tool get-token gmail \
-  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com</code></pre>
+  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com \
+  --client-id <span class="string">&lt;YOUR_CLIENT_ID&gt;</span> \
+  --client-secret <span class="string">&lt;YOUR_CLIENT_SECRET&gt;</span> \
+  --scope https://mail.google.com/</code></pre>
+
+<p>Replace <code>&lt;YOUR_CLIENT_ID&gt;</code> and <code>&lt;YOUR_CLIENT_SECRET&gt;</code> with the values from <strong>Section 3, Step 4</strong>.</p>
 
 <p>This will:</p>
 <ol>
@@ -437,16 +451,21 @@ sudo postmap /etc/postfix/sender_canonical
 sudo systemctl reload postfix</code></pre>
 
 <!-- ============================================================ -->
-<h2>9. TLS Certificates in Postfix Chroot</h2>
+<h2>9. Postfix Chroot Setup</h2>
 
-<p>Postfix runs in a chroot jail (<code>/var/spool/postfix</code>). It needs access to the system CA certificates to verify Gmail's TLS certificate. The CA certificate bundle must be available inside the chroot.</p>
+<p>Postfix runs in a chroot jail (<code>/var/spool/postfix</code>). Both the CA certificate bundle (for TLS to Gmail) and the <code>sasl-xoauth2</code> plugin configuration must be available inside the chroot.</p>
 
 <pre><code><span class="comment"># Copy the CA certificates into the chroot</span>
 sudo mkdir -p /var/spool/postfix/etc/ssl/certs
-sudo cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/</code></pre>
+sudo cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/
+
+<span class="comment"># Copy the sasl-xoauth2 config into the chroot (matching the install prefix path)</span>
+sudo mkdir -p /var/spool/postfix/usr/local/etc
+sudo cp /usr/local/etc/sasl-xoauth2.conf /var/spool/postfix/usr/local/etc/sasl-xoauth2.conf
+sudo chmod 600 /var/spool/postfix/usr/local/etc/sasl-xoauth2.conf</code></pre>
 
 <div class="warning">
-  <strong>Important:</strong> Every time Postfix is restarted, files in the chroot may be cleared. To automate the certificate copy, create a systemd override:
+  <strong>Important:</strong> Every time Postfix is restarted, files in the chroot may be cleared. To automate the copies, create a systemd override:
 </div>
 
 <pre><code><span class="comment"># Create the override directory</span>
@@ -456,6 +475,8 @@ sudo mkdir -p /etc/systemd/system/postfix@-.service.d
 sudo bash -c 'cat &gt; /etc/systemd/system/postfix@-.service.d/override.conf &lt;&lt; EOF
 [Service]
 ExecStartPre=/bin/cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/
+ExecStartPre=/bin/mkdir -p /var/spool/postfix/usr/local/etc
+ExecStartPre=/bin/cp /usr/local/etc/sasl-xoauth2.conf /var/spool/postfix/usr/local/etc/sasl-xoauth2.conf
 EOF'
 
 <span class="comment"># Reload systemd and restart Postfix</span>
@@ -494,13 +515,16 @@ sudo tail -f /var/log/mail.log</code></pre>
 <h2>11. Troubleshooting</h2>
 
 <h3>Enable verbose logging for sasl-xoauth2</h3>
-<p>Edit <code>/etc/sasl-xoauth2.conf</code> and set:</p>
+<p>Edit <code>/usr/local/etc/sasl-xoauth2.conf</code> and set:</p>
 <pre><code>{
   ...
   "log_to_syslog_on_failure": "yes",
   "log_full_trace_on_failure": "yes"
 }</code></pre>
-<p>Then restart Postfix and retry. Check logs with <code>journalctl -u postfix -n 50</code>.</p>
+<p>Then copy the updated config into the chroot and restart Postfix:</p>
+<pre><code>sudo cp /usr/local/etc/sasl-xoauth2.conf /var/spool/postfix/usr/local/etc/sasl-xoauth2.conf
+sudo systemctl restart postfix</code></pre>
+<p>Check logs with <code>journalctl -u postfix -n 50</code>.</p>
 
 <h3>Common Issues</h3>
 <table>
@@ -533,7 +557,7 @@ sudo tail -f /var/log/mail.log</code></pre>
   <tr>
     <td><code>Token refresh failed</code></td>
     <td>Client ID/Secret mismatch or API disabled</td>
-    <td>Verify credentials in <code>/etc/sasl-xoauth2.conf</code>; ensure Gmail API is enabled in Cloud Console</td>
+    <td>Verify credentials in <code>/usr/local/etc/sasl-xoauth2.conf</code>; ensure Gmail API is enabled in Cloud Console</td>
   </tr>
 </table>
 
@@ -564,7 +588,7 @@ sudo sasl-xoauth2-tool test-token-refresh \
   <li><strong>Restrict relay access:</strong> Configure <code>mynetworks</code> in <code>main.cf</code> to only allow trusted hosts:
     <pre><code>mynetworks = 127.0.0.0/8, 10.0.0.0/24</code></pre>
   </li>
-  <li><strong>File permissions:</strong> Ensure <code>/etc/sasl-xoauth2.conf</code>, <code>sasl_passwd</code>, and token files are mode <code>600</code> and owned by <code>root</code> or <code>postfix</code></li>
+  <li><strong>File permissions:</strong> Ensure <code>/usr/local/etc/sasl-xoauth2.conf</code>, <code>sasl_passwd</code>, and token files are mode <code>600</code> and owned by <code>root</code> or <code>postfix</code></li>
   <li><strong>Firewall:</strong> Only expose Postfix (port 25) to your internal network; never to the public internet</li>
   <li><strong>Monitor logs:</strong> Set up log monitoring for authentication failures</li>
   <li><strong>Token rotation:</strong> Periodically review OAuth consent and connected apps in your Google account security settings</li>
@@ -582,7 +606,7 @@ sudo sasl-xoauth2-tool test-token-refresh \
   <tr><td>Authorization Endpoint</td><td><code>https://accounts.google.com/o/oauth2/auth</code></td></tr>
   <tr><td>OAuth2 Scope</td><td><code>https://mail.google.com/</code></td></tr>
   <tr><td>Token File Location</td><td><code>/var/spool/postfix/etc/tokens/&lt;email&gt;</code></td></tr>
-  <tr><td>Plugin Config</td><td><code>/etc/sasl-xoauth2.conf</code></td></tr>
+  <tr><td>Plugin Config</td><td><code>/usr/local/etc/sasl-xoauth2.conf</code></td></tr>
   <tr><td>Postfix Config</td><td><code>/etc/postfix/main.cf</code></td></tr>
   <tr><td>SASL Password Map</td><td><code>/etc/postfix/sasl_passwd</code></td></tr>
 </table>
@@ -642,6 +666,7 @@ sudo apt install -y build-essential cmake pkg-config \
 cd /tmp &amp;&amp; git clone https://github.com/tarickb/sasl-xoauth2.git
 cd sasl-xoauth2 &amp;&amp; mkdir build &amp;&amp; cd build &amp;&amp; cmake .. &amp;&amp; make
 sudo make install
+sudo ln -sf /usr/local/lib/sasl2/libsasl-xoauth2.so /usr/lib/x86_64-linux-gnu/sasl2/libxoauth2.so
 
 <span class="comment"># 3. Create token directory</span>
 sudo mkdir -p /var/spool/postfix/etc/tokens
@@ -649,7 +674,7 @@ sudo chown -R postfix:postfix /var/spool/postfix/etc/tokens
 sudo chmod 700 /var/spool/postfix/etc/tokens
 
 <span class="comment"># 4. Configure sasl-xoauth2.conf (edit with your Client ID &amp; Secret)</span>
-sudo nano /etc/sasl-xoauth2.conf
+sudo nano /usr/local/etc/sasl-xoauth2.conf
 
 <span class="comment"># 5. Configure Postfix main.cf</span>
 sudo nano /etc/postfix/main.cf
@@ -659,13 +684,18 @@ sudo nano /etc/postfix/sasl_passwd
 sudo postmap /etc/postfix/sasl_passwd
 sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db
 
-<span class="comment"># 7. Copy CA certs into chroot</span>
+<span class="comment"># 7. Copy CA certs and sasl-xoauth2 config into chroot</span>
 sudo mkdir -p /var/spool/postfix/etc/ssl/certs
 sudo cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/
+sudo mkdir -p /var/spool/postfix/usr/local/etc
+sudo cp /usr/local/etc/sasl-xoauth2.conf /var/spool/postfix/usr/local/etc/sasl-xoauth2.conf
 
-<span class="comment"># 8. Obtain OAuth2 token</span>
+<span class="comment"># 8. Obtain OAuth2 token (use your Client ID &amp; Secret from step 4)</span>
 sudo sasl-xoauth2-tool get-token gmail \
-  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com \
+  --client-id &lt;YOUR_CLIENT_ID&gt; \
+  --client-secret &lt;YOUR_CLIENT_SECRET&gt; \
+  --scope https://mail.google.com/
 sudo chown postfix:postfix /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
 sudo chmod 600 /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
 
