@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Postfix SMTP Relay to Gmail using OAuth2</title>
+<style>
+  @page {
+    size: A4;
+    margin: 2cm 2.5cm;
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 9pt;
+      color: #666;
+    }
+  }
+  body {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #222;
+    max-width: 100%;
+  }
+  h1 {
+    color: #1a73e8;
+    font-size: 22pt;
+    border-bottom: 3px solid #1a73e8;
+    padding-bottom: 8px;
+    margin-top: 0;
+  }
+  h2 {
+    color: #174ea6;
+    font-size: 16pt;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 5px;
+    margin-top: 30px;
+    page-break-after: avoid;
+  }
+  h3 {
+    color: #185abc;
+    font-size: 13pt;
+    margin-top: 20px;
+    page-break-after: avoid;
+  }
+  code {
+    background: #f1f3f4;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace;
+    font-size: 10pt;
+    color: #c7254e;
+  }
+  pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 14px 18px;
+    border-radius: 6px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    overflow-x: auto;
+    page-break-inside: avoid;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: #d4d4d4;
+  }
+  .comment { color: #6a9955; }
+  .keyword { color: #569cd6; }
+  .string { color: #ce9178; }
+  .variable { color: #9cdcfe; }
+  .note {
+    background: #e8f0fe;
+    border-left: 4px solid #1a73e8;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+    page-break-inside: avoid;
+  }
+  .note strong { color: #174ea6; }
+  .warning {
+    background: #fef7e0;
+    border-left: 4px solid #f9ab00;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+    page-break-inside: avoid;
+  }
+  .warning strong { color: #e37400; }
+  .danger {
+    background: #fce8e6;
+    border-left: 4px solid #d93025;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+    page-break-inside: avoid;
+  }
+  .danger strong { color: #a50e0e; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 10pt;
+  }
+  th {
+    background: #1a73e8;
+    color: white;
+    font-weight: 600;
+  }
+  tr:nth-child(even) { background: #f8f9fa; }
+  .diagram {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    text-align: center;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 10pt;
+    line-height: 1.4;
+    page-break-inside: avoid;
+  }
+  .step-num {
+    display: inline-block;
+    background: #1a73e8;
+    color: white;
+    width: 26px;
+    height: 26px;
+    line-height: 26px;
+    text-align: center;
+    border-radius: 50%;
+    font-weight: bold;
+    font-size: 12pt;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .subtitle {
+    color: #5f6368;
+    font-size: 13pt;
+    margin-top: -10px;
+    margin-bottom: 25px;
+  }
+  .header-meta {
+    color: #5f6368;
+    font-size: 10pt;
+    margin-bottom: 30px;
+  }
+  ul, ol { margin: 8px 0; }
+  li { margin: 4px 0; }
+  a { color: #1a73e8; text-decoration: none; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 30px 0; }
+</style>
+</head>
+<body>
+
+<h1>Postfix SMTP Relay to Gmail using OAuth2</h1>
+<p class="subtitle">Configure Postfix on Debian/Ubuntu to relay mail through Gmail SMTP with modern OAuth2 authentication</p>
+<p class="header-meta">
+  Platform: Debian 12 / Ubuntu 22.04+ &nbsp;|&nbsp; Postfix 3.7+ &nbsp;|&nbsp; sasl-xoauth2 0.25+<br>
+  Last updated: January 2026
+</p>
+
+<!-- ============================================================ -->
+<h2>1. Overview</h2>
+
+<p>Many legacy systems &mdash; printers, monitoring tools, ERP/CRM applications, scripts &mdash; need to send email but only support plain SMTP (username + password). Google is tightening security and <strong>"Less Secure App" access has been permanently disabled</strong>. App Passwords still work but require per-user 2FA and offer no token rotation.</p>
+
+<p>This guide sets up <strong>Postfix as a local SMTP relay</strong> that accepts plain SMTP from legacy clients on your LAN and forwards mail to Gmail's SMTP servers using <strong>OAuth2 (XOAUTH2)</strong> authentication.</p>
+
+<div class="diagram">
+<pre style="background:none;color:#333;text-align:left;display:inline-block;padding:0;">
++-----------------+          +-------------------+          +----------------+
+|  Legacy Client  |  SMTP    |   Postfix Relay   |  OAuth2  |   Gmail SMTP   |
+|  (printer, app, | -------> |  (your server)    | -------> | smtp.gmail.com |
+|   script, etc.) |  :25     |  Debian/Ubuntu    |  :587    |   (Google)     |
++-----------------+          +-------------------+          +----------------+
+                                      |
+                              sasl-xoauth2 plugin
+                              handles token refresh
+                              via Google OAuth2 API
+</pre>
+</div>
+
+<div class="note">
+  <strong>Note:</strong> This guide works with both free Gmail accounts (<code>@gmail.com</code>) and Google Workspace accounts (<code>@yourdomain.com</code>). For Workspace, you may also consider configuring an SMTP relay in the Google Admin console for higher volume sending.
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Prerequisites</h2>
+
+<table>
+  <tr><th>Requirement</th><th>Details</th></tr>
+  <tr><td>Operating System</td><td>Debian 12 (Bookworm) or Ubuntu 22.04+ with root/sudo access</td></tr>
+  <tr><td>Gmail Account</td><td>A Gmail or Google Workspace account to send mail from (e.g., <code>postfix-relay@gmail.com</code>)</td></tr>
+  <tr><td>Google Cloud Project</td><td>Access to the Google Cloud Console to create OAuth2 credentials</td></tr>
+  <tr><td>Network</td><td>Outbound access to <code>smtp.gmail.com:587</code> and <code>oauth2.googleapis.com:443</code></td></tr>
+  <tr><td>Build tools</td><td><code>build-essential cmake libcurl4-openssl-dev libjsoncpp-dev libsasl2-dev</code></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>3. Google Cloud Console Configuration</h2>
+
+<h3><span class="step-num">1</span> Create a Google Cloud Project</h3>
+<ol>
+  <li>Go to <a href="https://console.cloud.google.com/">https://console.cloud.google.com/</a></li>
+  <li>Click <strong>Select a project</strong> &rarr; <strong>New Project</strong></li>
+  <li>Name it something descriptive (e.g., <code>postfix-smtp-relay</code>) and click <strong>Create</strong></li>
+  <li>Select the newly created project</li>
+</ol>
+
+<h3><span class="step-num">2</span> Enable the Gmail API</h3>
+<ol>
+  <li>Navigate to <strong>APIs &amp; Services</strong> &rarr; <strong>Library</strong></li>
+  <li>Search for <strong>Gmail API</strong></li>
+  <li>Click on it and press <strong>Enable</strong></li>
+</ol>
+
+<div class="note">
+  <strong>Note:</strong> The Gmail API must be enabled even though we are using SMTP, because the OAuth2 scope <code>https://mail.google.com/</code> is part of the Gmail API.
+</div>
+
+<h3><span class="step-num">3</span> Configure the OAuth Consent Screen</h3>
+<ol>
+  <li>Go to <strong>APIs &amp; Services</strong> &rarr; <strong>OAuth consent screen</strong></li>
+  <li>Choose <strong>Internal</strong> (for Workspace) or <strong>External</strong> (for free Gmail accounts)</li>
+  <li>Fill in the required fields:
+    <ul>
+      <li><strong>App name:</strong> <code>Postfix SMTP Relay</code></li>
+      <li><strong>User support email:</strong> your email address</li>
+      <li><strong>Developer contact:</strong> your email address</li>
+    </ul>
+  </li>
+  <li>Click <strong>Save and Continue</strong></li>
+  <li>On the <strong>Scopes</strong> page, click <strong>Add or Remove Scopes</strong></li>
+  <li>Add the scope: <code>https://mail.google.com/</code></li>
+  <li>Click <strong>Save and Continue</strong> through the remaining steps</li>
+</ol>
+
+<div class="warning">
+  <strong>Important:</strong> For <strong>External</strong> user type (free Gmail), the app will be in "Testing" mode. You must add the Gmail account you will use for sending as a <strong>test user</strong> under the OAuth consent screen settings. Testing mode apps support up to 100 test users and tokens are valid but need periodic re-consent.
+</div>
+
+<h3><span class="step-num">4</span> Create OAuth2 Credentials</h3>
+<ol>
+  <li>Go to <strong>APIs &amp; Services</strong> &rarr; <strong>Credentials</strong></li>
+  <li>Click <strong>+ Create Credentials</strong> &rarr; <strong>OAuth client ID</strong></li>
+  <li>Application type: <strong>Desktop app</strong></li>
+  <li>Name: <code>postfix-sasl-xoauth2</code></li>
+  <li>Click <strong>Create</strong></li>
+  <li>Note down the <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+</ol>
+
+<div class="danger">
+  <strong>Security:</strong> Store the Client ID and Client Secret securely. They will be placed in a configuration file on your server with restricted permissions.
+</div>
+
+<p>You should now have:</p>
+<table>
+  <tr><th>Value</th><th>Example</th></tr>
+  <tr><td>Client ID</td><td><code>123456789-abcdefg.apps.googleusercontent.com</code></td></tr>
+  <tr><td>Client Secret</td><td><code>GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx</code></td></tr>
+  <tr><td>Gmail address</td><td><code>postfix-relay@gmail.com</code></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>4. Install Build Dependencies &amp; sasl-xoauth2</h2>
+
+<h3><span class="step-num">1</span> Install build dependencies</h3>
+<pre><code>sudo apt update
+sudo apt install -y build-essential cmake pkg-config \
+  libcurl4-openssl-dev libjsoncpp-dev libsasl2-dev</code></pre>
+
+<h3><span class="step-num">2</span> Build and install sasl-xoauth2</h3>
+<pre><code><span class="comment"># Clone the sasl-xoauth2 repository</span>
+cd /tmp
+git clone https://github.com/tarickb/sasl-xoauth2.git
+cd sasl-xoauth2
+
+<span class="comment"># Build</span>
+mkdir build &amp;&amp; cd build
+cmake ..
+make
+
+<span class="comment"># Install the SASL plugin</span>
+sudo make install</code></pre>
+
+<h3><span class="step-num">3</span> Verify the plugin is installed</h3>
+<pre><code><span class="comment"># The plugin library should be in the SASL plugin directory</span>
+ls -la /usr/lib/x86_64-linux-gnu/sasl2/libxoauth2.so
+
+<span class="comment"># You should also have the token helper tool</span>
+which sasl-xoauth2-tool</code></pre>
+
+<!-- ============================================================ -->
+<h2>5. Install and Configure Postfix</h2>
+
+<h3><span class="step-num">1</span> Install Postfix</h3>
+<pre><code>sudo apt install -y postfix libsasl2-modules
+
+<span class="comment"># During installation, select "Satellite system" or "Internet with smarthost"</span>
+<span class="comment"># You can reconfigure later with: sudo dpkg-reconfigure postfix</span></code></pre>
+
+<h3><span class="step-num">2</span> Configure <code>/etc/postfix/main.cf</code></h3>
+<p>Edit the Postfix main configuration. Below are the key settings to add or modify:</p>
+
+<pre><code><span class="comment"># ── Relay Host ──────────────────────────────────────────────</span>
+relayhost = [smtp.gmail.com]:587
+
+<span class="comment"># ── SASL Authentication ────────────────────────────────────</span>
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options =
+smtp_sasl_mechanism_filter = xoauth2
+
+<span class="comment"># ── TLS Encryption ─────────────────────────────────────────</span>
+smtp_tls_security_level = encrypt
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+smtp_tls_wrappermode = no
+
+<span class="comment"># ── Sender Rewriting (optional) ────────────────────────────</span>
+<span class="comment"># Force all outbound mail to come from the Gmail address</span>
+<span class="comment"># Uncomment the next two lines if your legacy clients send</span>
+<span class="comment"># with arbitrary From addresses:</span>
+<span class="comment"># smtp_generic_maps = hash:/etc/postfix/generic</span>
+<span class="comment"># sender_canonical_maps = hash:/etc/postfix/sender_canonical</span></code></pre>
+
+<div class="note">
+  <strong>Note:</strong> Gmail will reject mail if the <code>From:</code> address doesn't match the authenticated account (or a configured alias). If your legacy clients send with a different <code>From:</code> address, you must configure sender rewriting. See <strong>Section 8</strong>.
+</div>
+
+<h3><span class="step-num">3</span> Create the SASL password map</h3>
+<pre><code><span class="comment"># Create the password file pointing to the token location</span>
+sudo bash -c 'cat &gt; /etc/postfix/sasl_passwd &lt;&lt; EOF
+[smtp.gmail.com]:587    postfix-relay@gmail.com:/var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+EOF'
+
+<span class="comment"># Generate the hash database and lock down permissions</span>
+sudo postmap /etc/postfix/sasl_passwd
+sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db</code></pre>
+
+<div class="warning">
+  <strong>Important:</strong> Replace <code>postfix-relay@gmail.com</code> with your actual Gmail or Workspace email address. This must match in <strong>both</strong> the sasl_passwd file and the token filename.
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Configure sasl-xoauth2</h2>
+
+<h3><span class="step-num">1</span> Create the sasl-xoauth2 configuration file</h3>
+
+<pre><code>sudo bash -c 'cat &gt; /etc/sasl-xoauth2.conf &lt;&lt; EOF
+{
+  "client_id": "<span class="string">&lt;YOUR_CLIENT_ID&gt;</span>",
+  "client_secret": "<span class="string">&lt;YOUR_CLIENT_SECRET&gt;</span>",
+  "token_endpoint": "https://oauth2.googleapis.com/token",
+  "log_to_syslog_on_failure": "yes",
+  "log_full_trace_on_failure": "no"
+}
+EOF'
+
+sudo chmod 600 /etc/sasl-xoauth2.conf</code></pre>
+
+<p>Replace <code>&lt;YOUR_CLIENT_ID&gt;</code> and <code>&lt;YOUR_CLIENT_SECRET&gt;</code> with the values from <strong>Section 3, Step 4</strong>.</p>
+
+<h3><span class="step-num">2</span> Create the token directory</h3>
+<pre><code><span class="comment"># The token directory must be inside the Postfix chroot</span>
+sudo mkdir -p /var/spool/postfix/etc/tokens
+sudo chown -R postfix:postfix /var/spool/postfix/etc/tokens
+sudo chmod 700 /var/spool/postfix/etc/tokens</code></pre>
+
+<!-- ============================================================ -->
+<h2>7. Obtain the OAuth2 Token</h2>
+
+<h3><span class="step-num">1</span> Generate the initial token</h3>
+<pre><code>sudo sasl-xoauth2-tool get-token gmail \
+  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com</code></pre>
+
+<p>This will:</p>
+<ol>
+  <li>Open a URL in your browser (or display one to visit manually)</li>
+  <li>Ask you to log in with the Gmail account</li>
+  <li>Ask you to authorize the application</li>
+  <li>Provide an authorization code to paste back into the terminal</li>
+</ol>
+
+<div class="note">
+  <strong>Note:</strong> If running on a headless server, copy the displayed URL to a browser on another machine. After authorizing, paste the authorization code back into the terminal session.
+</div>
+
+<h3><span class="step-num">2</span> Verify the token file</h3>
+<pre><code><span class="comment"># Check the token file was created and contains valid JSON</span>
+sudo cat /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+
+<span class="comment"># It should contain: access_token, refresh_token, expiry, etc.</span></code></pre>
+
+<h3><span class="step-num">3</span> Fix token file permissions</h3>
+<pre><code>sudo chown postfix:postfix /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+sudo chmod 600 /var/spool/postfix/etc/tokens/postfix-relay@gmail.com</code></pre>
+
+<div class="warning">
+  <strong>Token Refresh:</strong> The <code>sasl-xoauth2</code> plugin automatically refreshes the access token using the stored refresh token. Access tokens typically expire after 1 hour, but the refresh token handles renewal transparently. However, if the refresh token itself is revoked (e.g., password change, consent revoked), you must re-run the <code>get-token</code> command.
+</div>
+
+<!-- ============================================================ -->
+<h2>8. Sender Rewriting (Optional)</h2>
+
+<p>Gmail enforces that the <code>From:</code> header matches the authenticated sender (or a configured alias in Gmail settings). If your legacy clients send as different addresses, set up sender rewriting:</p>
+
+<h3>Option A: Generic Table (rewrite all senders)</h3>
+<pre><code><span class="comment"># /etc/postfix/generic</span>
+<span class="comment"># Map any local sender to the Gmail address</span>
+@your-server.local    postfix-relay@gmail.com</code></pre>
+<pre><code><span class="comment"># Add to /etc/postfix/main.cf:</span>
+smtp_generic_maps = hash:/etc/postfix/generic
+
+<span class="comment"># Generate the hash and reload</span>
+sudo postmap /etc/postfix/generic
+sudo systemctl reload postfix</code></pre>
+
+<h3>Option B: Sender Canonical Map (selective rewriting)</h3>
+<pre><code><span class="comment"># /etc/postfix/sender_canonical</span>
+printer@local           postfix-relay@gmail.com
+erp-system@local        postfix-relay@gmail.com
+monitoring@local        postfix-relay@gmail.com</code></pre>
+<pre><code><span class="comment"># Add to /etc/postfix/main.cf:</span>
+sender_canonical_maps = hash:/etc/postfix/sender_canonical
+
+<span class="comment"># Generate the hash and reload</span>
+sudo postmap /etc/postfix/sender_canonical
+sudo systemctl reload postfix</code></pre>
+
+<!-- ============================================================ -->
+<h2>9. TLS Certificates in Postfix Chroot</h2>
+
+<p>Postfix runs in a chroot jail (<code>/var/spool/postfix</code>). It needs access to the system CA certificates to verify Gmail's TLS certificate. The CA certificate bundle must be available inside the chroot.</p>
+
+<pre><code><span class="comment"># Copy the CA certificates into the chroot</span>
+sudo mkdir -p /var/spool/postfix/etc/ssl/certs
+sudo cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/</code></pre>
+
+<div class="warning">
+  <strong>Important:</strong> Every time Postfix is restarted, files in the chroot may be cleared. To automate the certificate copy, create a systemd override:
+</div>
+
+<pre><code><span class="comment"># Create the override directory</span>
+sudo mkdir -p /etc/systemd/system/postfix@-.service.d
+
+<span class="comment"># Create the override file</span>
+sudo bash -c 'cat &gt; /etc/systemd/system/postfix@-.service.d/override.conf &lt;&lt; EOF
+[Service]
+ExecStartPre=/bin/cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/
+EOF'
+
+<span class="comment"># Reload systemd and restart Postfix</span>
+sudo systemctl daemon-reload
+sudo systemctl restart postfix</code></pre>
+
+<!-- ============================================================ -->
+<h2>10. Start Postfix and Test</h2>
+
+<h3><span class="step-num">1</span> Restart Postfix</h3>
+<pre><code>sudo systemctl restart postfix
+sudo systemctl enable postfix</code></pre>
+
+<h3><span class="step-num">2</span> Send a test email</h3>
+<pre><code><span class="comment"># Using sendmail</span>
+echo "Subject: Postfix Gmail OAuth2 Test
+From: postfix-relay@gmail.com
+To: recipient@example.com
+
+This is a test email sent through Postfix relaying via Gmail with OAuth2." | sendmail -t
+
+<span class="comment"># Or using the mail command</span>
+echo "Test body" | mail -s "Postfix OAuth2 Test" -r postfix-relay@gmail.com recipient@example.com</code></pre>
+
+<h3><span class="step-num">3</span> Monitor the mail log</h3>
+<pre><code><span class="comment"># Watch the log in real-time</span>
+sudo journalctl -u postfix -f
+
+<span class="comment"># Or check the traditional mail log</span>
+sudo tail -f /var/log/mail.log</code></pre>
+
+<p>A successful delivery will show:</p>
+<pre><code>status=sent (250 2.0.0 OK ... - gsmtp)</code></pre>
+
+<!-- ============================================================ -->
+<h2>11. Troubleshooting</h2>
+
+<h3>Enable verbose logging for sasl-xoauth2</h3>
+<p>Edit <code>/etc/sasl-xoauth2.conf</code> and set:</p>
+<pre><code>{
+  ...
+  "log_to_syslog_on_failure": "yes",
+  "log_full_trace_on_failure": "yes"
+}</code></pre>
+<p>Then restart Postfix and retry. Check logs with <code>journalctl -u postfix -n 50</code>.</p>
+
+<h3>Common Issues</h3>
+<table>
+  <tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+  <tr>
+    <td><code>SASL authentication failed</code></td>
+    <td>Token file missing, expired, or wrong permissions</td>
+    <td>Re-run <code>sasl-xoauth2-tool get-token</code>; verify <code>chown postfix:postfix</code></td>
+  </tr>
+  <tr>
+    <td><code>relay access denied</code></td>
+    <td>Postfix not configured as relay</td>
+    <td>Verify <code>relayhost</code> in <code>main.cf</code>; check <code>mynetworks</code> includes your LAN</td>
+  </tr>
+  <tr>
+    <td><code>certificate verification failed</code></td>
+    <td>CA certs not in chroot</td>
+    <td>Copy <code>ca-certificates.crt</code> into chroot (see Section 9)</td>
+  </tr>
+  <tr>
+    <td><code>550 5.7.0 Mail rejected</code></td>
+    <td><code>From:</code> address doesn't match Gmail account</td>
+    <td>Configure sender rewriting (Section 8) or add the address as a Gmail alias</td>
+  </tr>
+  <tr>
+    <td><code>invalid_grant</code> in logs</td>
+    <td>Refresh token revoked or expired</td>
+    <td>Re-authorize: run <code>sasl-xoauth2-tool get-token gmail ...</code> again</td>
+  </tr>
+  <tr>
+    <td><code>Token refresh failed</code></td>
+    <td>Client ID/Secret mismatch or API disabled</td>
+    <td>Verify credentials in <code>/etc/sasl-xoauth2.conf</code>; ensure Gmail API is enabled in Cloud Console</td>
+  </tr>
+</table>
+
+<h3>Test token refresh manually</h3>
+<pre><code><span class="comment"># Manually test that the token can be refreshed</span>
+sudo sasl-xoauth2-tool test-token-refresh \
+  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com</code></pre>
+
+<!-- ============================================================ -->
+<h2>12. Gmail Sending Limits</h2>
+
+<div class="warning">
+  <strong>Be aware of Gmail sending limits:</strong>
+  <ul style="margin-bottom:0;">
+    <li><strong>Free Gmail:</strong> 500 emails per day (per rolling 24-hour period)</li>
+    <li><strong>Google Workspace:</strong> 2,000 emails per day</li>
+    <li>Per-message recipient limit: 500 (free) / 2,000 (Workspace)</li>
+    <li>Exceeding limits results in temporary sending blocks (up to 24 hours)</li>
+  </ul>
+</div>
+
+<p>For higher volume requirements with Google Workspace, consider using the <strong>Google Workspace SMTP Relay</strong> service instead (configured in the Admin console under Apps &rarr; Google Workspace &rarr; Gmail &rarr; Routing &rarr; SMTP relay service), which allows up to 10,000 messages per day.</p>
+
+<!-- ============================================================ -->
+<h2>13. Security Recommendations</h2>
+
+<ul>
+  <li><strong>Restrict relay access:</strong> Configure <code>mynetworks</code> in <code>main.cf</code> to only allow trusted hosts:
+    <pre><code>mynetworks = 127.0.0.0/8, 10.0.0.0/24</code></pre>
+  </li>
+  <li><strong>File permissions:</strong> Ensure <code>/etc/sasl-xoauth2.conf</code>, <code>sasl_passwd</code>, and token files are mode <code>600</code> and owned by <code>root</code> or <code>postfix</code></li>
+  <li><strong>Firewall:</strong> Only expose Postfix (port 25) to your internal network; never to the public internet</li>
+  <li><strong>Monitor logs:</strong> Set up log monitoring for authentication failures</li>
+  <li><strong>Token rotation:</strong> Periodically review OAuth consent and connected apps in your Google account security settings</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>14. Quick Reference</h2>
+
+<table>
+  <tr><th>Item</th><th>Value</th></tr>
+  <tr><td>SMTP Server</td><td><code>smtp.gmail.com</code></td></tr>
+  <tr><td>SMTP Port</td><td><code>587</code> (STARTTLS)</td></tr>
+  <tr><td>SASL Mechanism</td><td><code>XOAUTH2</code></td></tr>
+  <tr><td>Token Endpoint</td><td><code>https://oauth2.googleapis.com/token</code></td></tr>
+  <tr><td>Authorization Endpoint</td><td><code>https://accounts.google.com/o/oauth2/auth</code></td></tr>
+  <tr><td>OAuth2 Scope</td><td><code>https://mail.google.com/</code></td></tr>
+  <tr><td>Token File Location</td><td><code>/var/spool/postfix/etc/tokens/&lt;email&gt;</code></td></tr>
+  <tr><td>Plugin Config</td><td><code>/etc/sasl-xoauth2.conf</code></td></tr>
+  <tr><td>Postfix Config</td><td><code>/etc/postfix/main.cf</code></td></tr>
+  <tr><td>SASL Password Map</td><td><code>/etc/postfix/sasl_passwd</code></td></tr>
+</table>
+
+<hr>
+
+<h2>Appendix A: Complete main.cf Example</h2>
+
+<pre><code><span class="comment"># /etc/postfix/main.cf - Gmail OAuth2 Relay Configuration</span>
+
+<span class="comment"># ── General ─────────────────────────────────────────────────</span>
+smtpd_banner = $myhostname ESMTP
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+
+<span class="comment"># ── Host Identity ──────────────────────────────────────────</span>
+myhostname = relay.local
+mydomain = local
+myorigin = $myhostname
+mydestination = $myhostname, localhost.$mydomain, localhost
+mynetworks = 127.0.0.0/8, 10.0.0.0/24
+
+<span class="comment"># ── Relay ──────────────────────────────────────────────────</span>
+relayhost = [smtp.gmail.com]:587
+inet_interfaces = all
+inet_protocols = ipv4
+
+<span class="comment"># ── SASL / OAuth2 ─────────────────────────────────────────</span>
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options =
+smtp_sasl_mechanism_filter = xoauth2
+
+<span class="comment"># ── TLS ───────────────────────────────────────────────────</span>
+smtp_tls_security_level = encrypt
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+smtp_tls_wrappermode = no
+smtp_tls_loglevel = 1
+
+<span class="comment"># ── Sender Rewriting (uncomment if needed) ────────────────</span>
+<span class="comment"># smtp_generic_maps = hash:/etc/postfix/generic</span>
+
+<span class="comment"># ── Limits ────────────────────────────────────────────────</span>
+mailbox_size_limit = 0
+message_size_limit = 26214400</code></pre>
+
+<hr>
+
+<h2>Appendix B: All Commands at a Glance</h2>
+<pre><code><span class="comment"># 1. Install dependencies</span>
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config \
+  libcurl4-openssl-dev libjsoncpp-dev libsasl2-dev postfix libsasl2-modules
+
+<span class="comment"># 2. Build sasl-xoauth2</span>
+cd /tmp &amp;&amp; git clone https://github.com/tarickb/sasl-xoauth2.git
+cd sasl-xoauth2 &amp;&amp; mkdir build &amp;&amp; cd build &amp;&amp; cmake .. &amp;&amp; make
+sudo make install
+
+<span class="comment"># 3. Create token directory</span>
+sudo mkdir -p /var/spool/postfix/etc/tokens
+sudo chown -R postfix:postfix /var/spool/postfix/etc/tokens
+sudo chmod 700 /var/spool/postfix/etc/tokens
+
+<span class="comment"># 4. Configure sasl-xoauth2.conf (edit with your Client ID &amp; Secret)</span>
+sudo nano /etc/sasl-xoauth2.conf
+
+<span class="comment"># 5. Configure Postfix main.cf</span>
+sudo nano /etc/postfix/main.cf
+
+<span class="comment"># 6. Create sasl_passwd and hash it</span>
+sudo nano /etc/postfix/sasl_passwd
+sudo postmap /etc/postfix/sasl_passwd
+sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db
+
+<span class="comment"># 7. Copy CA certs into chroot</span>
+sudo mkdir -p /var/spool/postfix/etc/ssl/certs
+sudo cp /etc/ssl/certs/ca-certificates.crt /var/spool/postfix/etc/ssl/certs/
+
+<span class="comment"># 8. Obtain OAuth2 token</span>
+sudo sasl-xoauth2-tool get-token gmail \
+  /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+sudo chown postfix:postfix /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+sudo chmod 600 /var/spool/postfix/etc/tokens/postfix-relay@gmail.com
+
+<span class="comment"># 9. Start Postfix</span>
+sudo systemctl restart postfix
+sudo systemctl enable postfix
+
+<span class="comment"># 10. Test</span>
+echo "Subject: Test" | sendmail -t recipient@example.com
+sudo journalctl -u postfix -f</code></pre>
+
+</body>
+</html>
