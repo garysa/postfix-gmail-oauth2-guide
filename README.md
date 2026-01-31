@@ -33,7 +33,7 @@ Legacy Client --SMTP:25--> Postfix Relay --OAuth2:587--> smtp.gmail.com
 2. Create OAuth2 credentials (Desktop app) — note the Client ID and Secret
 3. Install dependencies and build sasl-xoauth2
 4. Configure Postfix with `relayhost = [smtp.gmail.com]:587` and XOAUTH2 SASL
-5. Run `sasl-xoauth2-tool get-token gmail <token-path>` to authorize
+5. Run `sasl-xoauth2-tool get-token gmail <token-path> --client-id <ID> --client-secret <SECRET> --scope https://mail.google.com/` to authorize
 6. Restart Postfix and send a test email
 
 Full step-by-step instructions are in the PDF/HTML guide.
